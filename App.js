@@ -3,7 +3,7 @@
  * A professional flashlight app with multiple color options and continuous color transitions
  */
 
-import React, {useState, useRef, useEffect} from 'react';
+import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {
   SafeAreaView,
   StyleSheet,
@@ -17,7 +17,10 @@ import {
   Modal,
   ScrollView,
   Image,
+  Alert,
 } from 'react-native';
+
+import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 
 // Rainbow colors for continuous transition - using more colors for smoother spectrum
 const RAINBOW_COLORS = [
@@ -65,9 +68,30 @@ const App = () => {
   const [selectedColor, setSelectedColor] = useState('#000000');
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [isRainbowMode, setIsRainbowMode] = useState(false);
+  const [isTorchOn, setIsTorchOn] = useState(false);
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const flashAnim = useRef(new Animated.Value(1)).current;
-  const currentColorIndex = useRef(0); // Move to ref to persist between renders
+  const currentColorIndex = useRef(0);
+  const device = useCameraDevice('back');
+  const { hasPermission, requestPermission } = useCameraPermission();
+
+  useEffect(() => {
+    checkPermission();
+  }, []);
+
+  const checkPermission = async () => {
+    if (!hasPermission) {
+      const permission = await requestPermission();
+      if (!permission) {
+        Alert.alert(
+          'Permission Required',
+          'Camera permission is required to use the flashlight. Please enable it in your device settings.',
+          [{ text: 'OK' }]
+        );
+      }
+    }
+  };
 
   // Handle disco light animation
   useEffect(() => {
@@ -113,10 +137,53 @@ const App = () => {
   }, [isRainbowMode, flashAnim]);
 
   const selectColor = (color) => {
+    if (!hasPermission) {
+      Alert.alert(
+        'Permission Required',
+        'Camera permission is required to use the flashlight.',
+        [
+          { text: 'Request Permission', onPress: checkPermission },
+          { text: 'Cancel', style: 'cancel' }
+        ]
+      );
+      return;
+    }
+
+    if (!isCameraReady) {
+      Alert.alert(
+        'Camera Not Ready',
+        'Please wait for the camera to initialize.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setSelectedColor(color);
+    setIsRainbowMode(false);
+    // Toggle torch based on whether white is selected
+    setIsTorchOn(color === '#FFFFFF');
     // Ensure full brightness by setting opacity to 1
     fadeAnim.setValue(1);
   };
+
+  if (!hasPermission) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.text}>Camera permission is required</Text>
+        <TouchableOpacity style={styles.button} onPress={checkPermission}>
+          <Text style={styles.buttonText}>Grant Permission</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!device) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.text}>No camera device found</Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -125,6 +192,19 @@ const App = () => {
         backgroundColor={selectedColor}
       />
       
+      {/* Hidden camera component for torch control */}
+      <Camera
+        style={styles.hiddenCamera}
+        device={device}
+        isActive={true}
+        torch={isTorchOn ? 'on' : 'off'}
+        onInitialized={() => setIsCameraReady(true)}
+        onError={(error) => {
+          console.error('Camera error:', error);
+          Alert.alert('Camera Error', error.message);
+        }}
+      />
+
       {/* Main Flashlight Screen */}
       <Animated.View
         style={[
@@ -141,19 +221,24 @@ const App = () => {
         {SHARP_COLORS.map((color, index) => (
           <TouchableOpacity
             key={index}
-            style={[styles.mainColorButton, {backgroundColor: color}]}
-            onPress={() => {
-              selectColor(color);
-              setIsRainbowMode(false);
-            }}
+            style={[
+              styles.mainColorButton,
+              {backgroundColor: color},
+              color === '#FFFFFF' && isTorchOn && styles.selectedButton
+            ]}
+            onPress={() => selectColor(color)}
+            disabled={!isCameraReady}
           />
         ))}
         {/* Disco Button */}
         <TouchableOpacity
           onPress={() => {
             setIsRainbowMode(!isRainbowMode);
+            setIsTorchOn(false); // Turn off torch when entering disco mode
           }}
-          style={styles.discoButton}>
+          style={styles.discoButton}
+          disabled={!isCameraReady}
+        >
           <Image 
             source={require('./assets/disco.png')}
             style={styles.discoIcon}
@@ -169,6 +254,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
+  },
+  hiddenCamera: {
+    width: 1,
+    height: 1,
+    position: 'absolute',
+    opacity: 0,
   },
   flashlightScreen: {
     ...StyleSheet.absoluteFillObject,
@@ -189,10 +280,14 @@ const styles = StyleSheet.create({
     height: 45,
     borderRadius: 22.5,
   },
+  selectedButton: {
+    borderWidth: 3,
+    borderColor: '#00FF00',
+  },
   controlsContainer: {
     position: 'absolute',
-    right: 15, // Position on the right side
-    top: Platform.OS === 'ios' ? 100 : 80, // Align with color buttons
+    right: 15,
+    top: Platform.OS === 'ios' ? 100 : 80,
     alignItems: 'center',
   },
   discoButton: {
@@ -206,12 +301,24 @@ const styles = StyleSheet.create({
     height: 60,
     borderRadius: 30,
   },
-  modeButtonText: {
-    color: '#FFFFFF',
+  text: {
+    color: 'white',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  button: {
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: 15,
+    borderRadius: 8,
+    minWidth: 200,
+    alignItems: 'center',
+  },
+  buttonText: {
+    color: 'white',
     fontSize: 16,
     fontWeight: '600',
-    textAlign: 'center',
   },
 });
 
-export default App; 
+export default App;

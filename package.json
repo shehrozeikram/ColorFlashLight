@@ -12,7 +12,6 @@
   "dependencies": {
     "react": "19.0.0",
     "react-native": "0.79.3",
-    "react-native-torch": "^1.2.0",
     "react-native-vision-camera": "^4.6.4"
   },
   "devDependencies": {
